@@ -26,9 +26,17 @@ services:
 
   proxy:
 
-    image: nginxproxy/nginx-proxy:${NGINX_PROXY_VERSION:-alpine}
+    image: nginxproxy/nginx-proxy:${NGINX_PROXY_VERSION:-1.11-alpine}
     container_name: platform-proxy
     restart: unless-stopped
+
+    labels:
+      # How acme-companion finds this container. Prefer the label over the
+      # NGINX_PROXY_CONTAINER env var: the env var is trusted blindly, so if
+      # the proxy is not running acme fails with the misleading
+      # "can't get docker-gen container id" instead of naming the real
+      # problem. The label is resolved by querying running containers.
+      com.github.nginx-proxy.nginx: "true"
 
     environment:
       ENABLE_IPV6: "true"
@@ -38,20 +46,31 @@ services:
     networks:
       - platform
 
+    healthcheck:
+      # 503 for an unknown Host still proves nginx is serving; --fail would
+      # treat it as an error, so only the connection matters here.
+      test: ["CMD-SHELL", "curl -so /dev/null http://localhost/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
 
   acme:
 
     # Watches for containers with LETSENCRYPT_HOST and issues/renews their
     # certificates into the shared certs volume.
-    image: nginxproxy/acme-companion:${ACME_COMPANION_VERSION:-latest}
+    image: nginxproxy/acme-companion:${ACME_COMPANION_VERSION:-2.8}
     container_name: platform-acme
     restart: unless-stopped
 
     depends_on:
-      - proxy
+      # Not just "started": acme inspects the proxy container at boot and
+      # exits if it cannot find it.
+      proxy:
+        condition: service_healthy
 
     environment:
-      NGINX_PROXY_CONTAINER: platform-proxy
       DEFAULT_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
       # Point at the staging directory while testing — see .env.example.
       ACME_CA_URI: ${ACME_CA_URI:-https://acme-v02.api.letsencrypt.org/directory}

@@ -125,6 +125,14 @@ docker compose up -d --force-recreate acme
 docker compose logs -f acme
 ```
 
+If acme exits with `can't get docker-gen container id`, the proxy container is
+not running — the message is misleading. acme-companion accepts
+`NGINX_PROXY_CONTAINER` without checking that the container exists, so the
+failure surfaces one check later as a docker-gen problem. This stack therefore
+identifies the proxy by the `com.github.nginx-proxy.nginx` label and gates acme
+on the proxy's healthcheck, so the real cause — usually port 80 already bound —
+shows up directly.
+
 ### The registry needs its own nginx tuning
 
 `proxy/vhost.d/registry` is mounted as `/etc/nginx/vhost.d/${REGISTRY_HOST}`

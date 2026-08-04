@@ -40,6 +40,15 @@ README.
 exist. Auth is configured, so a missing file is fatal:
 `make zot-user U=admin P=<pw>`. The symptom through the proxy is a 502/503.
 
+**acme exits with "can't get docker-gen container id"** — misleading message;
+it almost always means **the proxy container is not running**, not that
+anything is wrong with docker-gen. acme-companion's entrypoint returns
+`NGINX_PROXY_CONTAINER` without checking the container exists, so the failure
+surfaces one check later. This repo therefore identifies the proxy with the
+`com.github.nginx-proxy.nginx` label instead, and gates acme on
+`condition: service_healthy` — if you see this error, look at why the proxy is
+down (usually port 80/443 already bound) rather than at acme.
+
 **Certificate not issued** — check in order: does the hostname resolve to this
 VM (`dig +short <host>`); is inbound 80 reachable (HTTP-01 needs it, check
 `ufw status`); does the container have both `VIRTUAL_HOST` and

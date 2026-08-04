@@ -55,6 +55,10 @@ Apps: `proxy` (nginx-proxy) + `acme` (acme-companion), `postgres`, `redis`,
 - **Exposing a service = two env vars** on it (`VIRTUAL_HOST`, `VIRTUAL_PORT`)
   plus `LETSENCRYPT_HOST`. nginx-proxy discovers it over the Docker socket;
   there is no central vhost file to edit.
+- **acme-companion finds the proxy by the `com.github.nginx-proxy.nginx`
+  label**, deliberately not by `NGINX_PROXY_CONTAINER`. The env var is trusted
+  without an existence check, so a stopped proxy produces the misleading
+  "can't get docker-gen container id". Don't reintroduce it.
 - **Large uploads need per-vhost nginx config.** `proxy/vhost.d/<hostname>`;
   the registry one sets `client_max_body_size 0` because nginx's 1 MB default
   rejects image layers.

@@ -6,13 +6,34 @@ SHELL := /bin/bash
 COMPOSE := docker compose
 BACKUP_DIR := backups
 
-.PHONY: help up down restart ps logs config pull psql redis-cli zot-user secrets backup check
+.PHONY: help up down restart ps logs config pull psql redis-cli zot-user secrets backup check doctor
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 check: ## Validate the merged compose config without starting anything
 	@$(COMPOSE) config --quiet && echo "compose config OK"
+
+doctor: ## Diagnose the docker socket that nginx-proxy and acme need
+	@sock=$$(grep -E '^DOCKER_HOST_PATH=' .env 2>/dev/null | cut -d= -f2); \
+	sock=$${sock:-/var/run/docker.sock}; \
+	echo "cli endpoint : $$(docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null)"; \
+	echo "DOCKER_HOST  : $${DOCKER_HOST:-<unset>}"; \
+	echo "mounting     : $$sock"; \
+	if [ ! -S "$$sock" ]; then \
+		echo "host socket  : MISSING or not a socket"; \
+		echo; echo "-> Set DOCKER_HOST_PATH in .env to the path shown as 'cli endpoint'."; \
+		echo "   Do not start the stack first: a bind mount of a missing path makes"; \
+		echo "   docker create a DIRECTORY there, which is then wrong forever."; \
+		exit 1; \
+	fi; \
+	echo "host socket  : OK  $$(ls -l $$sock)"; \
+	echo -n "from container: "; \
+	out=$$(docker run --rm -v "$$sock:/var/run/docker.sock:ro" --entrypoint sh \
+		nginxproxy/acme-companion:$${ACME_COMPANION_VERSION:-2.8} -c \
+		'curl -s --unix-socket /var/run/docker.sock http://localhost/version'); \
+	if [ -n "$$out" ]; then echo "$$out" | head -c 120; echo; \
+	else echo "UNREACHABLE — acme cannot query docker; check socket permissions"; exit 1; fi
 
 up: check ## Start (or update) the whole platform
 	$(COMPOSE) up -d

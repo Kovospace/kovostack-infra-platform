@@ -40,14 +40,25 @@ README.
 exist. Auth is configured, so a missing file is fatal:
 `make zot-user U=admin P=<pw>`. The symptom through the proxy is a 502/503.
 
-**acme exits with "can't get docker-gen container id"** — misleading message;
-it almost always means **the proxy container is not running**, not that
-anything is wrong with docker-gen. acme-companion's entrypoint returns
-`NGINX_PROXY_CONTAINER` without checking the container exists, so the failure
-surfaces one check later. This repo therefore identifies the proxy with the
-`com.github.nginx-proxy.nginx` label instead, and gates acme on
-`condition: service_healthy` — if you see this error, look at why the proxy is
-down (usually port 80/443 already bound) rather than at acme.
+**acme exits with "can't get my container ID" / "can't get nginx-proxy
+container ID" / "can't get docker-gen container id"** — all three are the same
+fault: **acme cannot query the Docker API**. Run `make doctor` first; it
+compares the socket the stack mounts against the one the CLI talks to and
+prints the fix.
+
+The usual cause is rootless Docker with `DOCKER_HOST_PATH` unset, so the stack
+mounts `/var/run/docker.sock` (which exists, owned `root:docker`) while the
+containers run under the rootless daemon — every call is denied. Set
+`DOCKER_HOST_PATH=/run/user/<uid>/docker.sock`.
+
+Do not chase the specific wording: which message appears depends only on which
+lookup runs first. `NGINX_PROXY_CONTAINER` is deliberately not set in this repo
+because it is trusted without an existence check and converts the clear error
+into the docker-gen one.
+
+Also check that a failed start has not left a **directory** where the socket
+should be (`ls -ld <path>`) — Docker creates bind-mount sources that do not
+exist, and it then shadows the real socket permanently.
 
 **Certificate not issued** — check in order: does the hostname resolve to this
 VM (`dig +short <host>`); is inbound 80 reachable (HTTP-01 needs it, check

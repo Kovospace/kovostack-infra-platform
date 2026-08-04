@@ -57,8 +57,14 @@ Apps: `proxy` (nginx-proxy) + `acme` (acme-companion), `postgres`, `redis`,
   there is no central vhost file to edit.
 - **acme-companion finds the proxy by the `com.github.nginx-proxy.nginx`
   label**, deliberately not by `NGINX_PROXY_CONTAINER`. The env var is trusted
-  without an existence check, so a stopped proxy produces the misleading
+  without an existence check, so it converts a clear error into the misleading
   "can't get docker-gen container id". Don't reintroduce it.
+- **The VM runs rootless Docker.** `DOCKER_HOST_PATH` must point at
+  `/run/user/<uid>/docker.sock`; `/var/run/docker.sock` also exists but belongs
+  to the rootful daemon and is unreadable from these containers. Rootless also
+  cannot bind ports <1024 without
+  `net.ipv4.ip_unprivileged_port_start=0`. `make doctor` checks both — run it
+  before debugging any proxy or certificate problem.
 - **Large uploads need per-vhost nginx config.** `proxy/vhost.d/<hostname>`;
   the registry one sets `client_max_body_size 0` because nginx's 1 MB default
   rejects image layers.

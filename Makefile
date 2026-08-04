@@ -17,9 +17,24 @@ check: ## Validate the merged compose config without starting anything
 doctor: ## Diagnose the docker socket that nginx-proxy and acme need
 	@sock=$$(grep -E '^DOCKER_HOST_PATH=' .env 2>/dev/null | cut -d= -f2); \
 	sock=$${sock:-/var/run/docker.sock}; \
-	echo "cli endpoint : $$(docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null)"; \
+	endpoint=$$(docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null); \
+	real=$${endpoint#unix://}; \
+	echo "cli endpoint : $$endpoint"; \
 	echo "DOCKER_HOST  : $${DOCKER_HOST:-<unset>}"; \
 	echo "mounting     : $$sock"; \
+	if [ -n "$$real" ] && [ "$$real" != "$$sock" ]; then \
+		echo; echo "MISMATCH: the stack mounts a different socket than your CLI talks to."; \
+		echo "nginx-proxy and acme would query the wrong (or an unreadable) daemon."; \
+		echo "Fix by putting this in .env, then: docker compose up -d --force-recreate proxy acme"; \
+		echo; echo "    DOCKER_HOST_PATH=$$real"; echo; \
+		case "$$real" in /run/user/*) \
+			echo "Rootless docker detected. Also check privileged ports, which rootless"; \
+			echo "cannot bind by default (the proxy needs 80/443):"; \
+			echo "    current net.ipv4.ip_unprivileged_port_start = $$(cat /proc/sys/net/ipv4/ip_unprivileged_port_start 2>/dev/null)"; \
+			echo "    if that is above 80:  echo 'net.ipv4.ip_unprivileged_port_start=0' | sudo tee /etc/sysctl.d/99-rootless.conf && sudo sysctl --system";; \
+		esac; \
+		exit 1; \
+	fi; \
 	if [ ! -S "$$sock" ]; then \
 		echo "host socket  : MISSING or not a socket"; \
 		echo; echo "-> Set DOCKER_HOST_PATH in .env to the path shown as 'cli endpoint'."; \

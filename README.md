@@ -133,6 +133,39 @@ identifies the proxy by the `com.github.nginx-proxy.nginx` label and gates acme
 on the proxy's healthcheck, so the real cause — usually port 80 already bound —
 shows up directly.
 
+### Rootless Docker
+
+Both proxy containers work by watching the Docker socket, so under rootless
+Docker two things must be set up before anything works. `make doctor` checks
+both:
+
+```bash
+make doctor        # compares the mounted socket against the CLI's endpoint
+```
+
+**1. Mount the right socket.** Rootless uses `/run/user/<uid>/docker.sock`.
+`/var/run/docker.sock` often still exists (owned `root:docker`), so the mount
+silently succeeds and then every API call is denied — container-root maps to
+your host uid, which is not in the `docker` group. The symptom is the
+misleading `can't get docker-gen container id`, or `can't get my container ID`.
+
+```dotenv
+DOCKER_HOST_PATH=/run/user/1000/docker.sock
+```
+
+**2. Allow privileged ports.** Rootless cannot bind below 1024 by default, and
+the proxy needs 80/443:
+
+```bash
+echo 'net.ipv4.ip_unprivileged_port_start=0' | sudo tee /etc/sysctl.d/99-rootless.conf
+sudo sysctl --system
+```
+
+Never let the stack start with a wrong socket path: Docker creates a
+**directory** at a missing bind-mount source, and that directory then shadows
+the real socket forever. If a start has already failed, check with
+`ls -ld <path>` and `sudo rmdir` anything that is not a socket.
+
 ### The registry needs its own nginx tuning
 
 `proxy/vhost.d/registry` is mounted as `/etc/nginx/vhost.d/${REGISTRY_HOST}`

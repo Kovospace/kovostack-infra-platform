@@ -1,0 +1,13 @@
+# Registry vhost — mounted as /etc/nginx/vhost.d/${REGISTRY_HOST}.
+#
+# Image layers and chart archives are large and streamed. Without these,
+# pushes fail at nginx's default 1m body limit (or the 64m in ./default),
+# and nginx spools whole multi-GB layers to disk before contacting zot.
+
+client_max_body_size 0;
+proxy_request_buffering off;
+
+# Large layers over a slow uplink take a while; don't cut them off.
+proxy_read_timeout 900s;
+proxy_send_timeout 900s;
+proxy_connect_timeout 75s;

@@ -1,0 +1,62 @@
+# nginx-proxy + acme-companion — host wiring.
+# Paths are relative to the repo root.
+#
+# Certificates and ACME account state live in named volumes, not in the repo:
+# they are generated, renewable, and must never be committed.
+
+services:
+
+  proxy:
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      - proxy-certs:/etc/nginx/certs:ro
+      - proxy-vhost:/etc/nginx/vhost.d
+      - proxy-html:/usr/share/nginx/html
+      # Read-only: nginx-proxy only watches container events.
+      - ${DOCKER_HOST_PATH:-/var/run/docker.sock}:/tmp/docker.sock:ro
+
+      # Applies to every vhost that has no file of its own.
+      - ./proxy/vhost.d/default:/etc/nginx/vhost.d/default:ro
+      # Per-vhost overrides are looked up by hostname, so the mount target
+      # is interpolated from .env.
+      - ./proxy/vhost.d/registry:/etc/nginx/vhost.d/${REGISTRY_HOST:?set REGISTRY_HOST in .env}:ro
+
+      # Hand-written server blocks for backends that are not containers —
+      # e.g. forwarding the cluster's wildcard hostname to an ingress
+      # NodePort once Kubernetes is installed. nginx includes conf.d/*.conf,
+      # so each file must be mounted individually.
+      #- ./proxy/conf.d/cluster.conf:/etc/nginx/conf.d/cluster.conf:ro
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+
+  acme:
+
+    volumes:
+      - proxy-certs:/etc/nginx/certs
+      - proxy-vhost:/etc/nginx/vhost.d
+      - proxy-html:/usr/share/nginx/html
+      - proxy-acme:/etc/acme.sh
+      - ${DOCKER_HOST_PATH:-/var/run/docker.sock}:/var/run/docker.sock:ro
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+volumes:
+
+  proxy-certs:
+  proxy-vhost:
+  proxy-html:
+  proxy-acme:

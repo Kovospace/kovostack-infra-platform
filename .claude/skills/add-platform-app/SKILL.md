@@ -22,6 +22,14 @@ variable is undefined.
    `max-size: 10m` / `max-file: 3`. Start the file with the reminder that
    **relative paths resolve against the repo root**, so write `./myapp/data`.
 
+   To publish it over TLS, add three env vars here — `VIRTUAL_HOST:
+   ${MYAPP_HOST:?...}`, `VIRTUAL_PORT`, `LETSENCRYPT_HOST: ${MYAPP_HOST}`.
+   nginx-proxy and acme-companion pick it up from the Docker socket; nothing
+   else needs editing. The hostname must already resolve to the VM, or ACME
+   fails. If the app takes large uploads, add
+   `./proxy/vhost.d/myapp:/etc/nginx/vhost.d/${MYAPP_HOST}:ro` to
+   `proxy/compose.override.yml` — the global default caps bodies at 64 MB.
+
 3. **`COMPOSE_FILE` in `.env.example`** — append
    `:myapp/compose.override.yml`. Skipping this is silent; the app runs
    volume-less.

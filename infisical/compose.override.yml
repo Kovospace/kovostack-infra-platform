@@ -11,6 +11,11 @@ services:
       - "127.0.0.1:${INFISICAL_PORT:-8080}:8080"
 
     environment:
+      # Discovered by nginx-proxy and acme-companion over the docker socket.
+      VIRTUAL_HOST: ${SECRETS_HOST:?set SECRETS_HOST in .env}
+      VIRTUAL_PORT: "8080"
+      LETSENCRYPT_HOST: ${SECRETS_HOST}
+
       # Optional. Without SMTP you can still create the first admin account,
       # but invites, password resets and alerts will not be delivered.
       SMTP_HOST: ${SMTP_HOST:-}

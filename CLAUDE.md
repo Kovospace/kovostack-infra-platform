@@ -25,7 +25,8 @@ postgres/init/                   first-boot SQL/shell, one role+db per app
 Makefile                         day-to-day commands
 ```
 
-Apps: `postgres`, `redis`, `zot`, `infisical`.
+Apps: `proxy` (nginx-proxy) + `acme` (acme-companion), `postgres`, `redis`,
+`zot`, `infisical`.
 
 ## Non-obvious rules
 
@@ -44,6 +45,19 @@ Apps: `postgres`, `redis`, `zot`, `infisical`.
   or try `docker compose exec zot sh`.
 - **Infisical requires Redis.** It is not an optional cache; the queues break
   without it.
+- **zot exits if `zot/config/htpasswd` is missing** — auth is configured, so a
+  missing file is a startup error, not a fallback to anonymous. Create it
+  before the first `make up`.
+- **TLS belongs to this layer, not to Kubernetes.** Never suggest fronting
+  these services with the cluster's ingress: the cluster pulls its images from
+  zot, so that dependency is circular. The proxy here owns host 80/443, which
+  means k3s must be installed with `--disable=traefik --disable=servicelb`.
+- **Exposing a service = two env vars** on it (`VIRTUAL_HOST`, `VIRTUAL_PORT`)
+  plus `LETSENCRYPT_HOST`. nginx-proxy discovers it over the Docker socket;
+  there is no central vhost file to edit.
+- **Large uploads need per-vhost nginx config.** `proxy/vhost.d/<hostname>`;
+  the registry one sets `client_max_body_size 0` because nginx's 1 MB default
+  rejects image layers.
 - **Passwords must be alphanumeric.** `POSTGRES_PASSWORD`, `REDIS_PASSWORD` and
   `INFISICAL_DB_PASSWORD` are interpolated into connection URLs where `@ : / #`
   would need percent-encoding.
@@ -75,9 +89,13 @@ make zot-user U=ci P=pw
 make secrets        # generate a fresh set of values
 ```
 
-Ports (all `127.0.0.1` only): postgres 5432, zot 5000 (registry + UI),
-infisical 8080. Internally services use `postgres:5432`, `redis:6379`,
-`zot:5000` on `platform-network`.
+Public: the proxy on 80/443 only. Loopback (admin/tunnels): postgres 5432, zot
+5000 (registry + UI), infisical 8080. Internally services use `postgres:5432`,
+`redis:6379`, `zot:5000` on `platform-network`.
+
+Docker treats `127.0.0.0/8` as insecure-by-default, so `localhost:5000` pushes
+work without TLS — that is the bootstrap path and the fallback when certs are
+broken. Never suggest `insecure-registries` for a non-loopback address.
 
 ## Style
 

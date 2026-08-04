@@ -36,6 +36,28 @@ the failing step.
 only when `postgres/data` is empty. Create it manually with the SQL in the
 README.
 
+**zot exits immediately at first start** — `zot/config/htpasswd` does not
+exist. Auth is configured, so a missing file is fatal:
+`make zot-user U=admin P=<pw>`. The symptom through the proxy is a 502/503.
+
+**Certificate not issued** — check in order: does the hostname resolve to this
+VM (`dig +short <host>`); is inbound 80 reachable (HTTP-01 needs it, check
+`ufw status`); does the container have both `VIRTUAL_HOST` and
+`LETSENCRYPT_HOST`; `make logs S=acme`. If Let's Encrypt has rate-limited you
+(5 failures/hour, 50 certs/week per domain), switch `ACME_CA_URI` to staging
+until the plumbing works, then switch back and
+`docker compose up -d --force-recreate acme`.
+
+**413 Request Entity Too Large on docker push** — the per-vhost file is not
+being applied. It is mounted at `/etc/nginx/vhost.d/${REGISTRY_HOST}`, so a
+changed `REGISTRY_HOST` silently orphans it. Verify with
+`docker compose exec proxy cat /etc/nginx/vhost.d/<host>`.
+
+**Ports 80/443 already in use** — something else took the edge, almost always
+a k3s install that kept its default Traefik + ServiceLB. Reinstall k3s with
+`--disable=traefik --disable=servicelb` and give the cluster ingress a
+NodePort. Fall back to `localhost:5000` over an SSH tunnel meanwhile.
+
 **zot UI 404s** — the image was switched to `zot-minimal-*`, or
 `extensions.ui.enable` / `extensions.search.enable` was dropped from
 `zot/config/config.json`. Restart zot after any config edit; it does not

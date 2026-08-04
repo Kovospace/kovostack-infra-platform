@@ -1,0 +1,5 @@
+# Applied to every vhost without a hostname-specific file next to it.
+# Generous enough for the Infisical UI and API; the registry needs far more
+# and gets its own file.
+
+client_max_body_size 64m;

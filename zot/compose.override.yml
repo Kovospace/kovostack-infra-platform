@@ -10,9 +10,16 @@ services:
       - ./zot/config:/etc/zot:ro
       - ./zot/data:/var/lib/registry
 
+    environment:
+      # Discovered by nginx-proxy and acme-companion over the docker socket;
+      # zot itself ignores these.
+      VIRTUAL_HOST: ${REGISTRY_HOST:?set REGISTRY_HOST in .env}
+      VIRTUAL_PORT: "5000"
+      LETSENCRYPT_HOST: ${REGISTRY_HOST}
+
     ports:
-      # Loopback only. Put a TLS-terminating reverse proxy in front before
-      # exposing it — docker/helm clients refuse plain HTTP remotes.
+      # Loopback only, for admin access and SSH tunnels. Public traffic
+      # arrives through the proxy on 443 instead.
       - "127.0.0.1:${ZOT_PORT:-5000}:5000"
 
     logging:

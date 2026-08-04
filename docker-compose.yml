@@ -14,6 +14,52 @@ name: platform
 
 services:
 
+  # --- edge -----------------------------------------------------------
+  # The platform terminates its own TLS and does NOT depend on the future
+  # Kubernetes ingress. Fronting these services with the cluster's ingress
+  # would be circular: the cluster needs images, the images live in zot,
+  # zot would only be reachable through the cluster.
+  #
+  # Consequence: this proxy owns host ports 80/443. Install k3s with
+  # `--disable=traefik --disable=servicelb` and give the cluster ingress a
+  # NodePort, or it will fight for the same ports. See the README.
+
+  proxy:
+
+    image: nginxproxy/nginx-proxy:${NGINX_PROXY_VERSION:-alpine}
+    container_name: platform-proxy
+    restart: unless-stopped
+
+    environment:
+      ENABLE_IPV6: "true"
+      # Unknown Host headers (e.g. someone hitting the bare IP) get a 503
+      # instead of being served whichever vhost happens to be first.
+
+    networks:
+      - platform
+
+
+  acme:
+
+    # Watches for containers with LETSENCRYPT_HOST and issues/renews their
+    # certificates into the shared certs volume.
+    image: nginxproxy/acme-companion:${ACME_COMPANION_VERSION:-latest}
+    container_name: platform-acme
+    restart: unless-stopped
+
+    depends_on:
+      - proxy
+
+    environment:
+      NGINX_PROXY_CONTAINER: platform-proxy
+      DEFAULT_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+      # Point at the staging directory while testing — see .env.example.
+      ACME_CA_URI: ${ACME_CA_URI:-https://acme-v02.api.letsencrypt.org/directory}
+
+    networks:
+      - platform
+
+
   postgres:
 
     image: postgres:${POSTGRES_VERSION:-17-alpine}

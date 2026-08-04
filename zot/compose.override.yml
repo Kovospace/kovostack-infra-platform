@@ -1,0 +1,22 @@
+# zot registry — host wiring. Paths are relative to the repo root.
+
+services:
+
+  zot:
+
+    volumes:
+      # Whole config dir, because htpasswd (generated on the server, never
+      # committed) has to sit next to config.json.
+      - ./zot/config:/etc/zot:ro
+      - ./zot/data:/var/lib/registry
+
+    ports:
+      # Loopback only. Put a TLS-terminating reverse proxy in front before
+      # exposing it — docker/helm clients refuse plain HTTP remotes.
+      - "127.0.0.1:${ZOT_PORT:-5000}:5000"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

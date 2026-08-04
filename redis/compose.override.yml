@@ -1,0 +1,17 @@
+# Redis — host wiring. Paths are relative to the repo root.
+#
+# Not published to the host: nothing outside the platform network needs it.
+# Use `docker compose exec redis redis-cli -a "$REDIS_PASSWORD"` instead.
+
+services:
+
+  redis:
+
+    volumes:
+      - ./redis/data:/data
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

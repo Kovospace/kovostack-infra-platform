@@ -1,0 +1,113 @@
+# Base stack definition — the portable service topology.
+#
+# This file alone is NOT enough to run the platform: bind mounts, published
+# ports and app-specific tuning live in <app>/compose.override.yml and are
+# merged in through COMPOSE_FILE (set in .env, see .env.example).
+#
+#   docker compose config     # render the fully merged result
+#   docker compose up -d      # start everything
+#
+# Image tags are variables so a version can be pinned in .env without
+# touching this file. Defaults are floating tags — pin them in production.
+
+name: platform
+
+services:
+
+  postgres:
+
+    image: postgres:${POSTGRES_VERSION:-17-alpine}
+    container_name: platform-postgres
+    restart: unless-stopped
+    stop_grace_period: 1m
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: postgres
+      # Consumed by postgres/init/01-init-databases.sh on first boot only.
+      INFISICAL_DB_PASSWORD: ${INFISICAL_DB_PASSWORD:?set INFISICAL_DB_PASSWORD in .env}
+
+    networks:
+      - platform
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+
+  redis:
+
+    # Required by Infisical for its job queues and caching — not optional.
+    image: redis:${REDIS_VERSION:-7-alpine}
+    container_name: platform-redis
+    restart: unless-stopped
+
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+      - --appendonly
+      - "yes"
+
+    environment:
+      # Only so the healthcheck can authenticate; redis itself ignores it.
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+    networks:
+      - platform
+
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+  zot:
+
+    # The full (non-minimal) image — it is the one that ships the web UI,
+    # search and metrics extensions. zot-minimal-* has no UI.
+    image: ghcr.io/project-zot/zot-linux-amd64:${ZOT_VERSION:-latest}
+    container_name: platform-zot
+    restart: unless-stopped
+
+    # No healthcheck: the image is distroless, it has neither a shell nor
+    # curl, so there is nothing to probe /v2/ with from the inside.
+
+    networks:
+      - platform
+
+
+  infisical:
+
+    image: infisical/infisical:${INFISICAL_VERSION:-latest}
+    container_name: platform-infisical
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    environment:
+      NODE_ENV: production
+      # Schema migrations run automatically on container start.
+      DB_CONNECTION_URI: postgresql://infisical:${INFISICAL_DB_PASSWORD}@postgres:5432/infisical
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      ENCRYPTION_KEY: ${INFISICAL_ENCRYPTION_KEY:?set INFISICAL_ENCRYPTION_KEY in .env}
+      AUTH_SECRET: ${INFISICAL_AUTH_SECRET:?set INFISICAL_AUTH_SECRET in .env}
+      SITE_URL: ${INFISICAL_SITE_URL:-http://localhost:8080}
+
+    networks:
+      - platform
+
+
+networks:
+
+  platform:
+    name: platform-network

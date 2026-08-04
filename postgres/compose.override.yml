@@ -1,0 +1,27 @@
+# Postgres — host wiring.
+#
+# NOTE: relative paths are resolved against the PROJECT directory (the repo
+# root, where docker-compose.yml lives), not against this file's directory.
+
+services:
+
+  postgres:
+
+    volumes:
+      - ./postgres/data:/var/lib/postgresql/data
+      # Runs once, only when ./postgres/data is empty. See the README.
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+
+    ports:
+      # Loopback only — for psql/backups from the VM itself. Apps reach it
+      # over the platform network as host "postgres".
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+
+    # Default 64MB of /dev/shm is too small for parallel queries / big sorts.
+    shm_size: 256mb
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

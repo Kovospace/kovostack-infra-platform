@@ -1,0 +1,65 @@
+{
+  "distSpecVersion": "1.1.0",
+
+  "storage": {
+    "rootDirectory": "/var/lib/registry",
+    "dedupe": true,
+    "gc": true,
+    "gcDelay": "1h",
+    "gcInterval": "24h"
+  },
+
+  "http": {
+    "address": "0.0.0.0",
+    "port": "5000",
+
+    "auth": {
+      "htpasswd": {
+        "path": "/etc/zot/htpasswd"
+      },
+      "failDelay": 3
+    },
+
+    "accessControl": {
+      "repositories": {
+        "**": {
+          "anonymousPolicy": [],
+          "defaultPolicy": ["read"]
+        }
+      },
+      "adminPolicy": {
+        "users": ["admin"],
+        "actions": ["read", "create", "update", "delete"]
+      },
+      "metrics": {
+        "users": ["admin"]
+      }
+    }
+  },
+
+  "log": {
+    "level": "info"
+  },
+
+  "extensions": {
+    "ui": {
+      "enable": true
+    },
+    "search": {
+      "enable": true,
+      "cve": {
+        "updateInterval": "24h"
+      }
+    },
+    "metrics": {
+      "enable": true,
+      "prometheus": {
+        "path": "/metrics"
+      }
+    },
+    "scrub": {
+      "enable": true,
+      "interval": "24h"
+    }
+  }
+}

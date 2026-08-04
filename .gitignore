@@ -1,0 +1,11 @@
+.idea
+
+# secrets — never commit
+.env
+zot/config/htpasswd
+
+# runtime state
+postgres/data
+redis/data
+zot/data
+backups/

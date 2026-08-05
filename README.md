@@ -406,6 +406,31 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 Then add `MYAPP_DB_PASSWORD` to `.env.example`, to `.env`, and pass it through
 in `docker-compose.yml`.
 
+> **`OWNER myapp` is load-bearing — the app's migrations depend on it.**
+> Since PostgreSQL 15 the `public` schema is owned by `pg_database_owner`, a
+> role that resolves to whoever owns the current database, and `PUBLIC` no
+> longer has `CREATE` on it. Creating the database that way makes the app role
+> the owner of `public` implicitly, which is what lets it create tables. The
+> plausible-looking alternative
+>
+> ```sql
+> CREATE DATABASE myapp;                            -- owned by postgres
+> GRANT ALL PRIVILEGES ON DATABASE myapp TO myapp;  -- looks generous, is not
+> ```
+>
+> fails on the app's first migration with `ERROR: permission denied for schema
+> public`. `GRANT ALL ON DATABASE` covers only CONNECT, TEMP and creating
+> *schemas* — it says nothing about what is inside `public`. This worked before
+> PostgreSQL 15, which is why it is easy to write from memory.
+
+The app role deliberately cannot create roles or databases, read `pg_authid`,
+or connect to another app's database. It also cannot install **untrusted**
+extensions — PostGIS, TimescaleDB and `pg_stat_statements` need the superuser,
+so add them next to the `pgcrypto` line above rather than leaving them to a
+migration. Trusted ones (`pgcrypto`, `uuid-ossp`, `citext`, `hstore`,
+`pg_trgm`, `ltree`, `unaccent`) the app can create for itself, so a
+`CREATE EXTENSION IF NOT EXISTS` in a migration is safe.
+
 ## Using the registry
 
 ```bash

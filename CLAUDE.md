@@ -54,6 +54,14 @@ cluster on the same VM (whose manifests live in the other repo):
   `./zot/data`, never `./data`.
 - **`postgres/init/*` runs only when `postgres/data` is empty.** Editing it does
   nothing to a running cluster; live changes need manual SQL as well.
+- **A new database must be created `OWNER <app>`, not granted to it.** Since
+  PostgreSQL 15 the `public` schema is owned by `pg_database_owner` and PUBLIC
+  has no `CREATE` on it, so ownership is what lets the app's migrations create
+  tables. `CREATE DATABASE x; GRANT ALL PRIVILEGES ON DATABASE x TO x;` looks
+  equivalent and fails at the first `CREATE TABLE` with `permission denied for
+  schema public`. Untrusted extensions (PostGIS, TimescaleDB,
+  `pg_stat_statements`) still need the superuser; trusted ones (`pgcrypto`,
+  `uuid-ossp`, `citext`, `pg_trgm`, …) the app can create itself.
 - **zot's UI only exists in the full image** (`zot-linux-amd64`). Never switch
   to `zot-minimal-*` — it drops `extensions.ui`/`search` and the UI 404s.
 - **The zot image is distroless** — no shell, no curl. Don't add a healthcheck

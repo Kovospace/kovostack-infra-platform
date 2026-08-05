@@ -1,0 +1,25 @@
+# L4 edge — host wiring. Paths are relative to the repo root.
+#
+# This is the only container that publishes privileged ports. Under rootless
+# Docker that needs net.ipv4.ip_unprivileged_port_start=0 — `make doctor`.
+
+services:
+
+  edge:
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      # Rendered through envsubst at startup, see the file's own header.
+      - ./edge/sni.conf.stream-template:/etc/nginx/templates/sni.conf.stream-template:ro
+      # Replaces the image's default http server, which would fight the
+      # stream server for port 80.
+      - ./edge/health.conf:/etc/nginx/conf.d/default.conf:ro
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"

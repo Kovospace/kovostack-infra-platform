@@ -8,9 +8,9 @@ services:
 
   proxy:
 
-    ports:
-      - "80:80"
-      - "443:443"
+    # No published ports. Host 80/443 belong to the edge container, which
+    # forwards here over platform-network; publishing them again would
+    # bypass the SNI router and break the PROXY protocol handshake.
 
     volumes:
       - proxy-certs:/etc/nginx/certs:ro
@@ -25,11 +25,13 @@ services:
       # is interpolated from .env.
       - ./proxy/vhost.d/registry:/etc/nginx/vhost.d/${REGISTRY_HOST:?set REGISTRY_HOST in .env}:ro
 
-      # Hand-written server blocks for backends that are not containers —
-      # e.g. forwarding the cluster's wildcard hostname to an ingress
-      # NodePort once Kubernetes is installed. nginx includes conf.d/*.conf,
-      # so each file must be mounted individually.
-      #- ./proxy/conf.d/cluster.conf:/etc/nginx/conf.d/cluster.conf:ro
+      # Hand-written server blocks, for what docker-gen cannot generate:
+      # a backend that is not a container (the cluster ingress) and a
+      # healthcheck endpoint that does not expect a PROXY header. nginx
+      # includes conf.d/*.conf, so each file is mounted individually — and
+      # the numeric prefixes are load-bearing, see 00-cluster.conf.
+      - ./proxy/conf.d/00-cluster.conf:/etc/nginx/conf.d/00-cluster.conf:ro
+      - ./proxy/conf.d/10-health.conf:/etc/nginx/conf.d/10-health.conf:ro
 
     logging:
       driver: json-file

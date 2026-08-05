@@ -1,0 +1,90 @@
+# L4 edge — the only thing that owns host :80 and :443.
+#
+# It never decrypts anything. Port 443 is routed by the SNI name in the TLS
+# ClientHello: the platform's own hostnames go to nginx-proxy (which holds
+# their Let's Encrypt certificates), everything else is handed to the
+# Kubernetes ingress as an opaque TCP stream, so cert-manager owns those
+# certificates inside the cluster. Two certificate authorities, one port.
+#
+# Rendered at container start by the official nginx entrypoint:
+# /etc/nginx/templates/*.stream-template is passed through envsubst into
+# /etc/nginx/stream-conf.d/, and the entrypoint appends the wrapping
+# `stream { include /etc/nginx/stream-conf.d/*.conf; }` to nginx.conf. That
+# is why this file has no stream block of its own.
+#
+# The double extension is required: the entrypoint only strips
+# ".stream-template", so a file named sni.stream-template would render to
+# "sni", which that include glob does not match. nginx then starts happily
+# with no stream config at all and every connection is refused — `nginx -t`
+# does not catch it, `make check-edge` does.
+#
+# envsubst only replaces ${NAMES} that exist as environment variables, so
+# nginx's own $variables below survive untouched — but a typo in a ${NAME}
+# silently renders as an empty string. `make check-edge` catches that.
+
+# Docker's embedded DNS. Needed because every proxy_pass target below is a
+# variable: nginx resolves those per connection instead of once at startup,
+# so `docker compose up -d --force-recreate proxy` cannot leave this process
+# talking to an IP that no longer exists.
+resolver 127.0.0.11 valid=10s ipv6=off;
+
+# Two formats, because $edge_upstream is a map variable: reading it on a
+# port 80 connection (where there is no SNI to key on) would resolve it to
+# the map's default and log a cluster address for traffic that went to
+# nginx-proxy. Each server logs only what it actually knows.
+log_format sni    '$remote_addr -> $ssl_preread_server_name [$edge_upstream] '
+                  '$protocol $status $bytes_sent/$bytes_received $session_time';
+log_format plain  '$remote_addr -> :80 [proxy] '
+                  '$protocol $status $bytes_sent/$bytes_received $session_time';
+
+# The cluster is the default: any name that is not a platform service is
+# assumed to be a Kubernetes workload. Adding an app to the cluster
+# therefore needs no change here — but adding a *platform* vhost does, or
+# its traffic silently goes to Kubernetes. One line per platform hostname.
+map $ssl_preread_server_name $edge_upstream {
+    hostnames;
+
+    default             ${CLUSTER_INGRESS_IP}:30443;
+
+    ${REGISTRY_HOST}    proxy:443;
+    ${SECRETS_HOST}     proxy:443;
+}
+
+server {
+    listen 443;
+    listen [::]:443;
+    access_log /var/log/nginx/access.log sni;
+
+    # Read the ClientHello, forward the bytes, terminate nothing.
+    ssl_preread on;
+    proxy_pass $edge_upstream;
+
+    # The only way either backend can learn the client's address, since
+    # there is no HTTP layer here to carry X-Forwarded-For. Both ends must
+    # agree: nginx-proxy runs with ENABLE_PROXY_PROTOCOL=true and Traefik's
+    # websecure entrypoint needs proxyProtocol.trustedIPs — see the README.
+    proxy_protocol on;
+
+    # Registry pushes, `kubectl logs -f` and websockets all sit idle for
+    # long stretches; the 10 minute default cuts them off.
+    proxy_timeout 1h;
+
+    # But fail fast when the far end is not there at all: with the 60s
+    # default, every request to a cluster app hangs for a minute while k3s
+    # is down instead of erroring immediately.
+    proxy_connect_timeout 5s;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    access_log /var/log/nginx/access.log plain;
+
+    # Plain HTTP carries no SNI, so port 80 cannot be split here. All of it
+    # goes to nginx-proxy, which forwards the cluster's share on by Host
+    # header (proxy/conf.d/00-cluster.conf). That is the path cert-manager's
+    # HTTP-01 challenges take into the cluster.
+    set $platform_http proxy:80;
+    proxy_pass $platform_http;
+    proxy_protocol on;
+}

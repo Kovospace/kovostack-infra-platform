@@ -5,7 +5,7 @@ description: Add a new service to the kovostack platform stack — base compose 
 
 # Adding an app to the platform
 
-Every addition touches the same six places. Missing one is the usual failure
+Every addition touches the same eight places. Missing one is the usual failure
 mode: the app starts but has no volumes, or Compose refuses to render because a
 variable is undefined.
 
@@ -24,30 +24,38 @@ variable is undefined.
 
    To publish it over TLS, add three env vars here — `VIRTUAL_HOST:
    ${MYAPP_HOST:?...}`, `VIRTUAL_PORT`, `LETSENCRYPT_HOST: ${MYAPP_HOST}`.
-   nginx-proxy and acme-companion pick it up from the Docker socket; nothing
-   else needs editing. The hostname must already resolve to the VM, or ACME
-   fails. If the app takes large uploads, add
+   nginx-proxy and acme-companion pick it up from the Docker socket. The
+   hostname must already resolve to the VM, or ACME fails. If the app takes
+   large uploads, add
    `./proxy/vhost.d/myapp:/etc/nginx/vhost.d/${MYAPP_HOST}:ro` to
    `proxy/compose.override.yml` — the global default caps bodies at 64 MB.
 
-3. **`COMPOSE_FILE` in `.env.example`** — append
+3. **`edge/sni.conf.stream-template`** (only for an app with a public
+   hostname) — add `${MYAPP_HOST}    proxy:443;` to the SNI map, and pass
+   `MYAPP_HOST` into the `edge` service's `environment:` in the base compose.
+   The edge routes any name it does not recognise to the Kubernetes cluster,
+   so without this line the app's TLS traffic never reaches nginx-proxy and
+   the failure looks like a certificate problem. `make check-edge` prints the
+   rendered map.
+
+4. **`COMPOSE_FILE` in `.env.example`** — append
    `:myapp/compose.override.yml`. Skipping this is silent; the app runs
    volume-less.
 
-4. **Database** (if it needs one) — add
+5. **Database** (if it needs one) — add
    `create_app_db "myapp" "${MYAPP_DB_PASSWORD:-}"` to
    `postgres/init/01-init-databases.sh`, and pass `MYAPP_DB_PASSWORD` into the
    `postgres` service's `environment:` in the base compose. Remind the user
    that this script only runs on an empty `postgres/data`; on a live cluster
    they must also run the SQL from the README's "Adding a new app database".
 
-5. **`.env.example`** — a commented block for the app: port, version, and each
+6. **`.env.example`** — a commented block for the app: port, version, and each
    secret as an empty value with `# CHANGE ME — <generation command>`.
 
-6. **`README.md`** — a row in the stack table and one row per variable in the
+7. **`README.md`** — a row in the stack table and one row per variable in the
    values table (Required / How to generate / Notes).
 
-7. **`.gitignore`** — add `myapp/data` (and any generated credential file).
+8. **`.gitignore`** — add `myapp/data` (and any generated credential file).
 
 ## Then verify
 

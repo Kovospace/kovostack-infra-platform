@@ -9,22 +9,37 @@ Helm charts and Argo CD applications live in a separate GitOps repository — th
 services here are what that repository *points at* (registry, secrets, database).
 
 ```
-                    ┌──────────────────────────────────────────────┐
-                    │   VM  (docker compose, platform-network)     │
-   internet ──443──►│  nginx-proxy + acme-companion  (TLS edge)    │
-                    │        │                                     │
-   cluster / CI ───►│        ├── zot ──── registry: images+charts  │
-    pulls images    │        └── infisical ── secrets, UI + API    │
-    reads secrets   │            postgres ─── one database per app │
-    stores state    │            redis ────── queues for infisical │
-                    └──────────────────────────────────────────────┘
+                          internet
+                        :80    :443
+                          │      │
+              ┌───────────▼──────▼────────────────────────────────┐
+              │  edge — nginx stream, routes by SNI, decrypts     │
+              │         nothing, owns the two privileged ports    │
+              └───┬────────────────────────────────────┬──────────┘
+                  │ registry./secrets.                 │ everything else
+                  ▼                                    ▼
+   ┌──────────────────────────────────┐   ┌──────────────────────────────┐
+   │ nginx-proxy + acme-companion     │   │  Kubernetes (k3s, other repo)│
+   │   zot ─────── images + charts    │   │    Traefik  NodePort 30443   │
+   │   infisical ─ secrets, UI + API  │   │    cert-manager owns certs   │
+   │   postgres ── one db per app     │   │    Argo CD, applications     │
+   │   redis ───── queues             │   │                              │
+   └──────────────────────────────────┘   └──────────────────────────────┘
+        certs from Let's Encrypt               certs from Let's Encrypt
+        via acme-companion                     via cert-manager
 ```
+
+Port 80 is not split at the edge — plain HTTP carries no SNI to route on. All
+of it goes to nginx-proxy, which passes the cluster's share on by Host header
+(`proxy/conf.d/00-cluster.conf`); that is the path cert-manager's HTTP-01
+challenges take.
 
 ## The stack
 
 | App | Image | Port (localhost) | Purpose |
 | --- | --- | --- | --- |
-| **nginx-proxy** | `nginxproxy/nginx-proxy:alpine` | 80, 443 | TLS edge for the platform. Discovers backends by their `VIRTUAL_HOST` env var over the Docker socket — no central config to edit. |
+| **edge** | `nginx:alpine` | 80, 443 | L4 router. Splits `:443` by TLS SNI between the platform and the cluster without decrypting it, and forwards `:80` to nginx-proxy. The only container that publishes privileged ports. |
+| **nginx-proxy** | `nginxproxy/nginx-proxy:alpine` | — | TLS edge for the platform, behind `edge`. Discovers backends by their `VIRTUAL_HOST` env var over the Docker socket — no central config to edit. |
 | **acme-companion** | `nginxproxy/acme-companion` | — | Issues and renews Let's Encrypt certificates for every container carrying `LETSENCRYPT_HOST`. |
 | **PostgreSQL 17** | `postgres:17-alpine` | 5432 | Shared cluster, **one role + one database per app**. Roles own only their own database, so apps cannot read each other's data. |
 | **Redis 7** | `redis:7-alpine` | — | Job queues and caching for Infisical. Not published; internal only. |
@@ -77,31 +92,83 @@ Two independent certificate domains, permanently:
 
 `registry.example.com` never touches Kubernetes.
 
-### Plan the port conflict before installing k3s
+### How the two layers share port 443
 
-This proxy owns host ports 80 and 443. Only one process can. **k3s ships Traefik
-as its default ingress and its ServiceLB binds those same ports**, so a default
-k3s install will collide with the platform edge:
+Only one process can own a port, so `edge` owns 80 and 443 and hands each
+connection to whichever layer it belongs to. On 443 it reads the SNI name out
+of the TLS ClientHello — which is sent in the clear, before the handshake — and
+then forwards the bytes untouched:
+
+| SNI | Goes to | Certificate issued by |
+| --- | --- | --- |
+| `$REGISTRY_HOST`, `$SECRETS_HOST` | nginx-proxy | acme-companion, in this repo |
+| anything else | Traefik NodePort 30443 | cert-manager, in the cluster |
+
+The platform hostnames are the exception list; the cluster is the default. That
+means **adding an app to Kubernetes needs no change here at all**, but adding a
+new *platform* vhost needs a line in `edge/sni.conf.stream-template` or its
+traffic silently goes to the cluster.
+
+Because the edge never terminates TLS, it holds no certificates and cares about
+neither layer's issuer. And because it is L4, it keeps serving the platform
+while the cluster is down — the ordering dependency stays broken in the
+direction that matters.
+
+The one thing the edge cannot route is plain HTTP: there is no SNI in it. All of
+`:80` therefore goes to nginx-proxy, and `proxy/conf.d/00-cluster.conf` forwards
+whatever is not a platform vhost to NodePort 30080. That block is the default
+server for port 80 purely by load order — see the comment in the file before
+renaming it.
+
+### Installing k3s
+
+k3s ships Traefik as its default ingress and its ServiceLB binds 80/443, which
+would collide with the edge:
 
 ```bash
 curl -sfL https://get.k3s.io | sh -s - --disable=traefik --disable=servicelb
 ```
 
-Then run the ingress controller of your choice (Traefik or ingress-nginx) as a
-NodePort service on 30080/30443, and forward the cluster's wildcard hostname to
-it from this proxy: nginx-proxy only auto-generates vhosts for *containers*, so
-a NodePort backend needs a hand-written server block mounted into
-`/etc/nginx/conf.d/` — there is a commented-out mount ready for it in
-`proxy/compose.override.yml`. One front door, one place where TLS is
-terminated, and the platform stays up when the cluster is down.
+Then install Traefik yourself as a NodePort service. Two settings matter on the
+platform side — the edge and nginx-proxy both announce the real client with the
+PROXY protocol, and Traefik has to be told to trust it:
 
-Note this has nothing to do with Traefik specifically — ingress-nginx would
-contend for the same ports. The choice of ingress controller inside the cluster
-is independent of what runs here.
+```yaml
+# traefik helm values
+service:
+  type: NodePort
+ports:
+  web:                      # :30080, plain HTTP from nginx-proxy
+    nodePort: 30080
+    forwardedHeaders:
+      trustedIPs: ["<edge/proxy source address>"]   # X-Forwarded-For
+  websecure:                # :30443, TLS passthrough from the edge
+    nodePort: 30443
+    proxyProtocol:
+      trustedIPs: ["<edge source address>"]
+```
+
+`websecure` receives a PROXY header and `web` does not — the hop into 30080 is
+ordinary HTTP with `X-Forwarded-For` set, because nginx cannot emit a PROXY
+header from its HTTP proxy module. Getting `proxyProtocol` wrong on `web`, or
+missing on `websecure`, breaks the handshake rather than degrading quietly.
+
+Find the address Traefik actually sees the platform as with
+`kubectl -n kube-system logs deploy/traefik | grep ClientAddr`, and set
+`CLUSTER_INGRESS_IP` to an address where the containers can reach the NodePorts:
+
+```bash
+make cluster-check      # probes 30080/30443 from inside the edge container
+```
+
+Under rootless Docker the container's `127.0.0.1` is not the host's, so the
+loopback address never works — use the VM's own routable IP. Firewall
+30080/30443 afterwards: on a routable address they are a second, unrouted front
+door into the cluster.
 
 If you would rather keep the two layers fully separate, Netcup gives the VM an
 IPv6 /64: bind the cluster ingress to its own address and both layers get real
-80/443 with no forwarding and no shared certificates.
+80/443 with no edge, no SNI routing and no shared ports.
 
 ### Certificate issuance
 
@@ -130,8 +197,9 @@ not running — the message is misleading. acme-companion accepts
 `NGINX_PROXY_CONTAINER` without checking that the container exists, so the
 failure surfaces one check later as a docker-gen problem. This stack therefore
 identifies the proxy by the `com.github.nginx-proxy.nginx` label and gates acme
-on the proxy's healthcheck, so the real cause — usually port 80 already bound —
-shows up directly.
+on the proxy's healthcheck, so the real cause shows up directly. (The proxy
+itself no longer binds 80/443 — the edge does, and that is where an "address
+already in use" now comes from.)
 
 ### Rootless Docker
 
@@ -154,7 +222,7 @@ DOCKER_HOST_PATH=/run/user/1000/docker.sock
 ```
 
 **2. Allow privileged ports.** Rootless cannot bind below 1024 by default, and
-the proxy needs 80/443:
+the edge container needs 80/443:
 
 ```bash
 echo 'net.ipv4.ip_unprivileged_port_start=0' | sudo tee /etc/sysctl.d/99-rootless.conf
@@ -187,7 +255,8 @@ There is one base file plus one override per app:
 
 ```
 docker-compose.yml                  base: images, env, network, healthchecks, depends_on
-proxy/compose.override.yml          80/443, cert volumes, vhost.d mounts, docker socket
+edge/compose.override.yml           80/443, SNI template + healthcheck server mounts
+proxy/compose.override.yml          cert volumes, vhost.d and conf.d mounts, docker socket
 postgres/compose.override.yml       data + init bind mounts, published port, shm_size
 redis/compose.override.yml          data bind mount
 zot/compose.override.yml            config + data bind mounts, port, VIRTUAL_HOST
@@ -202,7 +271,7 @@ second VM given different paths) without touching the shared topology.
 They are chained through `COMPOSE_FILE` in `.env`:
 
 ```dotenv
-COMPOSE_FILE=docker-compose.yml:proxy/compose.override.yml:postgres/compose.override.yml:redis/compose.override.yml:zot/compose.override.yml:infisical/compose.override.yml
+COMPOSE_FILE=docker-compose.yml:edge/compose.override.yml:proxy/compose.override.yml:postgres/compose.override.yml:redis/compose.override.yml:zot/compose.override.yml:infisical/compose.override.yml
 ```
 
 With that set, ordinary commands just work:
@@ -251,9 +320,9 @@ Then:
   immediately; signup is open until one exists.
 - **zot UI** — `https://$REGISTRY_HOST`, log in with the htpasswd credentials.
 
-Only the proxy is exposed publicly. The services keep a `127.0.0.1` port for
-administration and SSH tunnels, so they stay reachable even if the proxy or a
-certificate is broken.
+Only the edge is exposed publicly. The services keep a `127.0.0.1` port for
+administration and SSH tunnels, so they stay reachable even if the edge, the
+proxy or a certificate is broken.
 
 ## Values to set by hand
 
@@ -266,7 +335,7 @@ missing. Nothing in this table may ever be committed.
 | `COMPOSE_FILE` | ✅ | copy from `.env.example` | Chains the override files. Without it only the base compose loads and nothing gets its volumes. |
 | `COMPOSE_PROJECT_NAME` | — | `platform` | Keeps container/network names stable. |
 | `DOCKER_HOST_PATH` | — | `/run/user/1000/docker.sock` | Only for rootless Docker; defaults to `/var/run/docker.sock`. |
-| `REGISTRY_HOST` | ✅ | `registry.example.com` | Public name for zot. Must resolve to this VM **before** first start — HTTP-01 validation. Also names the per-vhost nginx file. |
+| `REGISTRY_HOST` | ✅ | `registry.example.com` | Public name for zot. Must resolve to this VM **before** first start — HTTP-01 validation. Also names the per-vhost nginx file, and is one of the SNI names the edge keeps out of the cluster. |
 | `SECRETS_HOST` | ✅ | `secrets.example.com` | Public name for Infisical. Same DNS requirement. |
 | `ACME_EMAIL` | ✅ | `you@example.com` | Let's Encrypt account address; receives expiry warnings. |
 | `ACME_CA_URI` | — | staging URL | Leave unset for production. Point at the staging directory while testing to avoid burning rate limits. |
@@ -281,7 +350,8 @@ missing. Nothing in this table may ever be committed.
 | `INFISICAL_PORT` | — | `8080` | Published on loopback only. |
 | `ZOT_PORT` | — | `5000` | Published on loopback only. |
 | `SMTP_HOST` `SMTP_PORT` `SMTP_USERNAME` `SMTP_PASSWORD` `SMTP_FROM_ADDRESS` `SMTP_FROM_NAME` | — | provider-specific | Optional. Without them Infisical cannot send invites, password resets or alerts. |
-| `POSTGRES_VERSION` `REDIS_VERSION` `ZOT_VERSION` `INFISICAL_VERSION` `NGINX_PROXY_VERSION` `ACME_COMPANION_VERSION` | — | image tags | Pin these in production; the compose defaults float. |
+| `CLUSTER_INGRESS_IP` | — | the VM's own routable IP | Where NodePorts 30080/30443 are reachable **from inside a container**. Never `127.0.0.1` (that is the container's own loopback), and under rootless Docker the host's loopback is unreachable entirely. `make cluster-check` probes the candidates. Unset means cluster hostnames get a 502. |
+| `POSTGRES_VERSION` `REDIS_VERSION` `ZOT_VERSION` `INFISICAL_VERSION` `NGINX_PROXY_VERSION` `ACME_COMPANION_VERSION` `NGINX_VERSION` | — | image tags | Pin these in production; the compose defaults float. `NGINX_VERSION` is plain upstream nginx, used only by the edge. |
 
 Registry credentials are **not** environment variables — zot reads
 `zot/config/htpasswd`, which is git-ignored and created on the server:
@@ -300,6 +370,9 @@ is denied entirely.
 make            # list all targets
 make up         # start / apply changes
 make ps
+make check-edge     # render the SNI map with the real hostnames and validate it
+make cluster-check  # can the containers reach the ingress NodePorts?
+make logs S=edge    # one line per connection: client -> SNI [upstream]
 make logs S=infisical
 make pull       # update images and recreate
 make psql DB=infisical

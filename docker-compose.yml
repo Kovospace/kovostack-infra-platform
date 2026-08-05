@@ -15,14 +15,60 @@ name: platform
 services:
 
   # --- edge -----------------------------------------------------------
-  # The platform terminates its own TLS and does NOT depend on the future
-  # Kubernetes ingress. Fronting these services with the cluster's ingress
-  # would be circular: the cluster needs images, the images live in zot,
-  # zot would only be reachable through the cluster.
+  # Host :80 and :443 are owned by `edge`, an L4 router, and split between
+  # two independent TLS worlds:
   #
-  # Consequence: this proxy owns host ports 80/443. Install k3s with
-  # `--disable=traefik --disable=servicelb` and give the cluster ingress a
-  # NodePort, or it will fight for the same ports. See the README.
+  #   :443  routed by SNI, never decrypted here
+  #           platform hostnames  -> proxy      (certs from acme-companion)
+  #           anything else       -> Kubernetes (certs from cert-manager)
+  #   :80   all of it -> proxy, which forwards the cluster's share on by
+  #         Host header (proxy/conf.d/00-cluster.conf)
+  #
+  # The platform terminates its own TLS and does NOT depend on the cluster:
+  # fronting zot with the cluster's ingress would be circular — the cluster
+  # needs images, the images live in zot, zot would only be reachable
+  # through the cluster. The edge is L4 precisely so it stays out of that
+  # loop: it needs no certificate, no config from either side, and it keeps
+  # serving the platform while the cluster is down.
+  #
+  # Install k3s with `--disable=traefik --disable=servicelb` and give the
+  # cluster ingress NodePorts 30080/30443, or it will fight for 80/443.
+
+  edge:
+
+    image: nginx:${NGINX_VERSION:-alpine}
+    container_name: platform-edge
+    restart: unless-stopped
+
+    depends_on:
+      # Every connection is forwarded to one of the two backends; starting
+      # before the proxy exists only produces a minute of 502s.
+      proxy:
+        condition: service_healthy
+
+    environment:
+      # Substituted into edge/sni.stream-template at startup. Each platform
+      # hostname needs its own line in that file's map — everything not
+      # listed there is routed to Kubernetes.
+      REGISTRY_HOST: ${REGISTRY_HOST:?set REGISTRY_HOST in .env}
+      SECRETS_HOST: ${SECRETS_HOST:?set SECRETS_HOST in .env}
+      # Where the cluster ingress' NodePorts are reachable *from inside this
+      # container*. Not 127.0.0.1: k3s runs in the host's network namespace,
+      # this does not. `make cluster-check` finds a working value.
+      CLUSTER_INGRESS_IP: ${CLUSTER_INGRESS_IP:-127.0.0.1}
+
+    networks:
+      - platform
+
+    healthcheck:
+      # The stream servers cannot answer an HTTP probe; edge/health.conf
+      # provides a loopback-only endpoint that can.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:81/healthz | grep -q ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 
   proxy:
 
@@ -40,16 +86,27 @@ services:
 
     environment:
       ENABLE_IPV6: "true"
-      # Unknown Host headers (e.g. someone hitting the bare IP) get a 503
-      # instead of being served whichever vhost happens to be first.
+      # Traffic arrives from the edge container, so the client address is
+      # only knowable from the PROXY protocol header it prepends. This puts
+      # `proxy_protocol` on the :80 and :443 listeners — both of them, which
+      # is why the edge has to speak it on both ports too, and why the
+      # healthcheck below uses a separate plaintext port.
+      ENABLE_PROXY_PROTOCOL: "true"
+
+    extra_hosts:
+      # The cluster ingress, for proxy/conf.d/00-cluster.conf. This image
+      # has no envsubst, so the address is injected as an /etc/hosts entry
+      # rather than interpolated into the config file.
+      - "cluster-ingress:${CLUSTER_INGRESS_IP:-127.0.0.1}"
 
     networks:
       - platform
 
     healthcheck:
-      # 503 for an unknown Host still proves nginx is serving; --fail would
-      # treat it as an error, so only the connection matters here.
-      test: ["CMD-SHELL", "curl -so /dev/null http://localhost/ || exit 1"]
+      # Not port 80: with ENABLE_PROXY_PROTOCOL nginx expects a PROXY header
+      # there and curl cannot send one. proxy/conf.d/10-health.conf answers
+      # on loopback:81 instead.
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:81/healthz > /dev/null"]
       interval: 15s
       timeout: 5s
       retries: 5

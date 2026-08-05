@@ -26,6 +26,31 @@ missing that app's override file. The base compose has no volumes by design.
 inside `<app>/compose.override.yml`. Paths resolve against the repo root; it
 must be `./<app>/data`.
 
+**A platform hostname suddenly behaves like a cluster app** (wrong certificate,
+a 404 from Traefik, or a TLS handshake failure) — the edge routes by SNI and
+its map lists only the platform hostnames; everything else goes to Kubernetes.
+A name missing from `edge/sni.conf.stream-template`, or a typo in it, is
+routed into the cluster. `make check-edge` renders the map with the real values
+and `make logs S=edge` shows one line per connection: `client -> SNI
+[upstream]`.
+
+**Every cluster hostname 502s or hangs, platform hostnames fine** — the
+containers cannot reach the ingress NodePorts. `make cluster-check`. Under
+rootless Docker `CLUSTER_INGRESS_IP` must be the VM's routable address; the
+host's loopback is not reachable from a container. After changing it, the proxy
+needs `--force-recreate` (the address is an `/etc/hosts` entry, resolved once
+at startup), not just a restart.
+
+**The edge starts but refuses every connection** — the stream config was not
+loaded. The template must be named `*.conf.stream-template`; the entrypoint
+strips only `.stream-template`, and the generated include matches `*.conf`.
+`nginx -t` passes either way, `make check-edge` fails loudly.
+
+**nginx-proxy will not start after editing `proxy/conf.d/`** — with
+`ENABLE_PROXY_PROTOCOL` the `:80`/`:443` listeners all expect a PROXY header,
+and every server block sharing a listen socket must declare `proxy_protocol`
+identically. A hand-written block missing it fails config parsing.
+
 **Infisical restart-loops** — check, in order: Redis healthy and password
 matching `REDIS_URL`; the `infisical` role/database existing in Postgres;
 `INFISICAL_ENCRYPTION_KEY` unchanged since first boot (a changed key cannot

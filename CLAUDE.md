@@ -71,6 +71,12 @@ cluster on the same VM (whose manifests live in the other repo):
 - **zot exits if `zot/config/htpasswd` is missing** — auth is configured, so a
   missing file is a startup error, not a fallback to anonymous. Create it
   before the first `make up`.
+- **A zot htpasswd entry grants nothing on its own.** `defaultPolicy` is empty,
+  so a user is denied until an `accessControl` policy names it, and the
+  repository patterns do **not** merge — a user listed under `**` has no access
+  to a repository that also matches `apps/**` unless it is listed there too.
+  Actions are `read` / `create` (new tag) / `update` (move an existing tag) /
+  `delete`; omitting `update` is how the CI robot gets tag immutability.
 - **The platform's TLS belongs to this layer, not to Kubernetes.** Never
   suggest fronting *these* services with the cluster's ingress: the cluster
   pulls its images from zot, so that dependency is circular. The edge here owns

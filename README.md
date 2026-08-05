@@ -360,9 +360,36 @@ Registry credentials are **not** environment variables — zot reads
 make zot-user U=ci P='<password>'
 ```
 
-The user literally named `admin` gets push/delete rights (`adminPolicy` in
-`zot/config/config.json`); every other user is read-only, and anonymous access
-is denied entirely.
+Access is per user, set in `accessControl` in `zot/config/config.json`. Anonymous
+access is denied entirely, and **a user with no matching policy gets nothing** —
+`defaultPolicy` is empty, so creating an htpasswd entry is only half of adding
+someone.
+
+| User | Can | Where |
+| --- | --- | --- |
+| `admin` | read, create, update, delete | everywhere (`adminPolicy`) |
+| `ci` | read, create, update | `apps/**`, `charts/**` — the GitHub Actions robot |
+| `k8s` | read | everywhere — the cluster's pull credential |
+
+The patterns do **not** merge: a repository matching both `**` and `apps/**` is
+governed by the specific block alone, so every user that needs access to it has
+to be listed there. That is why `k8s` appears in all three.
+
+Two consequences worth knowing:
+
+- Dropping `update` from a robot gives you tag immutability — it can push a new
+  tag but cannot move an existing one. Good for release tags, awkward for a
+  rebuilt `:latest` or a retried CI job.
+- `/v2/_catalog` is filtered per user, so a scoped robot cannot even enumerate
+  the repositories it is not allowed to pull.
+
+Adding a robot is two steps and a restart:
+
+```bash
+make zot-user U=ci P='<password>'   # htpasswd entry
+$EDITOR zot/config/config.json      # list it in the policies it needs
+make restart S=zot
+```
 
 ## Operating it
 

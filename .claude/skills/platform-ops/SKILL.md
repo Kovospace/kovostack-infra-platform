@@ -111,9 +111,16 @@ hot-reload.
 **`docker compose exec zot ...` fails** — the image is distroless. Inspect it
 from outside with `docker compose logs zot` and the HTTP API.
 
-**Registry push denied** — only the user named `admin` has write access
-(`adminPolicy`); everyone else is read-only and anonymous is denied. Add users
-with `make zot-user U=<user> P=<pw>`.
+**Registry access denied for a user that definitely exists** — an htpasswd
+entry grants nothing by itself. `defaultPolicy` is empty in
+`zot/config/config.json`, so a user is denied until a policy names it, and the
+repository patterns do not merge: a policy on `**` does not apply to a
+repository that also matches `apps/**`. Check which pattern the repository hits
+and whether the user is listed *there*. `make restart S=zot` after editing.
+
+**Registry push denied, pull works** — the robot has `create` but not `update`,
+which is deliberate: it can push a new tag but not move an existing one. A
+retried CI job that already pushed will hit this.
 
 ## Upgrading
 

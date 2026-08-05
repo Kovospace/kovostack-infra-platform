@@ -49,6 +49,14 @@ variable is undefined.
    that this script only runs on an empty `postgres/data`; on a live cluster
    they must also run the SQL from the README's "Adding a new app database".
 
+   Copy that SQL rather than writing it from memory: the `OWNER myapp` clause
+   is what lets the app's own migrations create tables (PostgreSQL 15+ gives
+   the `public` schema to `pg_database_owner`, so granting privileges on the
+   database instead fails at the first `CREATE TABLE` with `permission denied
+   for schema public`). Any **untrusted** extension the app needs — PostGIS,
+   TimescaleDB, `pg_stat_statements` — must go in the superuser block there
+   too; trusted ones the app can create for itself.
+
 6. **`.env.example`** — a commented block for the app: port, version, and each
    secret as an empty value with `# CHANGE ME — <generation command>`.
 

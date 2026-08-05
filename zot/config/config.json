@@ -24,7 +24,26 @@
       "repositories": {
         "**": {
           "anonymousPolicy": [],
-          "defaultPolicy": ["read"]
+          "policies": [
+            { "users": ["k8s"], "actions": ["read"] }
+          ],
+          "defaultPolicy": []
+        },
+        "apps/**": {
+          "anonymousPolicy": [],
+          "policies": [
+            { "users": ["k8s"], "actions": ["read"] },
+            { "users": ["ci"], "actions": ["read", "create", "update"] }
+          ],
+          "defaultPolicy": []
+        },
+        "charts/**": {
+          "anonymousPolicy": [],
+          "policies": [
+            { "users": ["k8s"], "actions": ["read"] },
+            { "users": ["ci"], "actions": ["read", "create", "update"] }
+          ],
+          "defaultPolicy": []
         }
       },
       "adminPolicy": {

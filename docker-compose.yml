@@ -149,6 +149,7 @@ services:
       POSTGRES_DB: postgres
       # Consumed by postgres/init/01-init-databases.sh on first boot only.
       INFISICAL_DB_PASSWORD: ${INFISICAL_DB_PASSWORD:?set INFISICAL_DB_PASSWORD in .env}
+      KOVOSPACE_DB_PASSWORD: ${KOVOSPACE_DB_PASSWORD:?set KOVOSPACE_DB_PASSWORD in .env}
 
     networks:
       - platform

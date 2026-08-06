@@ -414,26 +414,48 @@ directories plus `.env`.
 ### Adding a new app database
 
 `postgres/init/01-init-databases.sh` runs **only when `postgres/data` is
-empty**, i.e. on the very first start. For a cluster that is already running,
-add the `create_app_db` line to the script (so a rebuilt VM gets it) *and*
-create the database on the live cluster by hand:
+empty**, i.e. on the very first start. Adding an app to a cluster that is
+already running takes three steps, in this order:
+
+**1.** Add `MYAPP_DB_PASSWORD` to `.env.example` (the key alone) and to `.env`
+(the value), then pass it through to the postgres service in
+`docker-compose.yml`:
+
+```yaml
+      MYAPP_DB_PASSWORD: ${MYAPP_DB_PASSWORD:?set MYAPP_DB_PASSWORD in .env}
+```
+
+**2.** Add the app to the script, so a rebuilt VM gets it too:
 
 ```bash
-make psql            # then:
-```
-```sql
-CREATE ROLE myapp LOGIN PASSWORD '<password>';
-CREATE DATABASE myapp OWNER myapp;
-REVOKE ALL ON DATABASE myapp FROM PUBLIC;
-\c myapp
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+create_app_db "myapp" "${MYAPP_DB_PASSWORD:-}"
 ```
 
-Then add `MYAPP_DB_PASSWORD` to `.env.example`, to `.env`, and pass it through
-in `docker-compose.yml`.
+**3.** Recreate postgres so it sees the new variable, then run the script by
+hand against the live cluster:
 
-> **`OWNER myapp` is load-bearing — the app's migrations depend on it.**
+```bash
+docker compose up -d postgres
+docker compose exec -u postgres postgres bash /docker-entrypoint-initdb.d/01-init-databases.sh
+```
+
+`create_app_db` is idempotent — existing roles and databases are left alone —
+so step 3 is also how the fifth app gets created without disturbing the first
+four.
+
+> **Run the script; do not type the SQL by hand.** `make psql` opens psql
+> without `ON_ERROR_STOP`, so a pasted block carries on after a failed
+> statement: `CREATE ROLE` errors, `\c myapp` fails in turn, and the
+> `CREATE EXTENSION` lines then apply to the `postgres` database instead. The
+> output ends looking like success and scrolls away.
+>
+> That is how `kovospace` came to be missing on 2026-08-06 with every step
+> apparently done. The app reported `password authentication failed for user
+> "kovospace"` — which is also exactly what PostgreSQL says for a role that
+> does not exist, so it reads as a wrong password for hours.
+
+> **The `OWNER` in `CREATE DATABASE ... OWNER` is load-bearing — the app's
+> migrations depend on it.**
 > Since PostgreSQL 15 the `public` schema is owned by `pg_database_owner`, a
 > role that resolves to whoever owns the current database, and `PUBLIC` no
 > longer has `CREATE` on it. Creating the database that way makes the app role
@@ -453,9 +475,9 @@ in `docker-compose.yml`.
 The app role deliberately cannot create roles or databases, read `pg_authid`,
 or connect to another app's database. It also cannot install **untrusted**
 extensions — PostGIS, TimescaleDB and `pg_stat_statements` need the superuser,
-so add them next to the `pgcrypto` line above rather than leaving them to a
-migration. Trusted ones (`pgcrypto`, `uuid-ossp`, `citext`, `hstore`,
-`pg_trgm`, `ltree`, `unaccent`) the app can create for itself, so a
+so add them next to the `pgcrypto` line inside `create_app_db` rather than
+leaving them to a migration. Trusted ones (`pgcrypto`, `uuid-ossp`, `citext`,
+`hstore`, `pg_trgm`, `ltree`, `unaccent`) the app can create for itself, so a
 `CREATE EXTENSION IF NOT EXISTS` in a migration is safe.
 
 ## Using the registry

@@ -13,9 +13,12 @@ services:
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
 
     ports:
-      # Loopback only — for psql/backups from the VM itself. Apps reach it
-      # over the platform network as host "postgres".
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+      # POSTGRES_BIND decides who can reach it. Docker-network apps
+      # (Infisical) use host "postgres" regardless; Kubernetes pods are not on
+      # that network and need a host address — docker0, 172.17.0.1.
+      # Never a public address: only a firewall rule would stand between the
+      # database and the internet.
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
 
     # Default 64MB of /dev/shm is too small for parallel queries / big sorts.
     shm_size: 256mb

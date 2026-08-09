@@ -55,5 +55,6 @@ EOSQL
 
 create_app_db "infisical" "${INFISICAL_DB_PASSWORD:-}"
 create_app_db "kovospace" "${KOVOSPACE_DB_PASSWORD:-}"
+create_app_db "paster" "${PASTER_DB_PASSWORD:-}"
 
 echo "init: done"

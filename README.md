@@ -344,6 +344,8 @@ missing. Nothing in this table may ever be committed.
 | `POSTGRES_PORT` | — | `5432` | Published on loopback only. |
 | `REDIS_PASSWORD` | ✅ | `openssl rand -hex 24` | Also interpolated into `REDIS_URL` — keep it alphanumeric. |
 | `INFISICAL_DB_PASSWORD` | ✅ | `openssl rand -hex 24` | Password for the `infisical` role. **Only applied on the first Postgres boot**; changing it later needs an `ALTER ROLE` too. |
+| `KOVOSPACE_DB_PASSWORD` | ✅ | `openssl rand -hex 24` | Password for the `kovospace` role — a cluster app, database only. Same first-boot caveat. |
+| `PASTER_DB_PASSWORD` | ✅ | `openssl rand -hex 24` | Password for the `paster` role — a cluster app, database only. Same first-boot caveat. |
 | `INFISICAL_ENCRYPTION_KEY` | ✅ | `openssl rand -hex 16` | Root key for stored secrets. **Lose it and every secret is unrecoverable.** Back it up off this VM. Exactly 32 hex chars. |
 | `INFISICAL_AUTH_SECRET` | ✅ | `openssl rand -base64 32` | Signs sessions/JWTs. Rotating it logs everyone out. |
 | `INFISICAL_SITE_URL` | ✅ | `https://secrets.example.com` | Public URL used to build invite and password-reset links. Must match `SECRETS_HOST` including the scheme. |

@@ -147,9 +147,12 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: postgres
-      # Consumed by postgres/init/01-init-databases.sh on first boot only.
+      # Consumed by postgres/init/01-init-databases.sh — on first boot, and
+      # whenever the script is re-run by hand via `docker compose exec`, which
+      # sees only what is listed here.
       INFISICAL_DB_PASSWORD: ${INFISICAL_DB_PASSWORD:?set INFISICAL_DB_PASSWORD in .env}
       KOVOSPACE_DB_PASSWORD: ${KOVOSPACE_DB_PASSWORD:?set KOVOSPACE_DB_PASSWORD in .env}
+      PASTER_DB_PASSWORD: ${PASTER_DB_PASSWORD:?set PASTER_DB_PASSWORD in .env}
 
     networks:
       - platform

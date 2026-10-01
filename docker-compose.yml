@@ -198,7 +198,7 @@ services:
 
     # The full (non-minimal) image — it is the one that ships the web UI,
     # search and metrics extensions. zot-minimal-* has no UI.
-    image: ghcr.io/project-zot/zot-linux-amd64:${ZOT_VERSION:-latest}
+    image: ghcr.io/project-zot/zot-linux-amd64:${ZOT_VERSION:-v2.1.21}
     container_name: platform-zot
     restart: unless-stopped
 

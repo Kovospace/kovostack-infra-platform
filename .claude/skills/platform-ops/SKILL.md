@@ -118,6 +118,13 @@ repository patterns do not merge: a policy on `**` does not apply to a
 repository that also matches `apps/**`. Check which pattern the repository hits
 and whether the user is listed *there*. `make restart S=zot` after editing.
 
+**Registry push fails with 502 after ~60s, zot logs `i/o timeout` with
+`latency: 1m0s`** — zot ≥ v2.1.17 applies `http.readTimeout`/`writeTimeout` to
+the *whole* request (default 60s), so any layer that takes longer to upload is
+cut off mid-stream; nginx-proxy reports zot's 500 as 502. `zot/config/config.json`
+sets both to `15m` to match the proxy's 900s. Keep `ZOT_VERSION` pinned and
+re-check this on upgrades until upstream #4149 (per-chunk deadlines) ships.
+
 **Registry push denied, pull works** — the robot has `create` but not `update`,
 which is deliberate: it can push a new tag but not move an existing one. A
 retried CI job that already pushed will hit this.
